@@ -1,0 +1,77 @@
+{
+  "version": "1.0.0",
+  "name": "GemBin",
+  "description": "Gem CLI Pre-compiled Binaries & Multi-language Implementations",
+  "organization": "HintyCloud",
+  "repository": "https://github.com/HintyCloud/Gem-Cli",
+  "license": "GPL-3.0",
+  "platforms": {
+    "linux-x86_64": {
+      "binary": "gem",
+      "status": "compiled",
+      "size": "15MB"
+    },
+    "linux-arm64": {
+      "binary": "gem",
+      "status": "cross-compile-required",
+      "size": null
+    },
+    "windows-x86_64": {
+      "binary": "gem.exe",
+      "status": "cross-compile-required",
+      "size": null
+    },
+    "windows-arm64": {
+      "binary": "gem.exe",
+      "status": "cross-compile-required",
+      "size": null
+    },
+    "macos-x86_64": {
+      "binary": "gem",
+      "status": "cross-compile-required",
+      "size": null
+    },
+    "macos-arm64": {
+      "binary": "gem",
+      "status": "cross-compile-required",
+      "size": null
+    },
+    "termux-arm64": {
+      "binary": "gem",
+      "status": "cross-compile-required",
+      "size": null
+    }
+  },
+  "languages": {
+    "rust": {
+      "directory": "etc/gem-rust",
+      "build": "cargo build --release",
+      "status": "compiles"
+    },
+    "go": {
+      "directory": "etc/gem-go",
+      "build": "go build -o gem .",
+      "status": "compiles"
+    },
+    "node": {
+      "directory": "etc/gem-node",
+      "build": "npm run build",
+      "status": "compiles"
+    },
+    "c": {
+      "directory": "etc/gem-c",
+      "build": "make linux",
+      "status": "compiles"
+    },
+    "bash": {
+      "directory": "etc/gem-bash",
+      "build": "none",
+      "status": "ready"
+    },
+    "java": {
+      "directory": "etc/gem-java",
+      "build": "mvn package",
+      "status": "compiles"
+    }
+  }
+}
