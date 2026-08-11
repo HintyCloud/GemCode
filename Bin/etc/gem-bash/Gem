@@ -1,0 +1,781 @@
+#!/usr/bin/env bash
+# gem - Main CLI entry point for Gem CLI Agent
+# Copyright (C) 2026 HintyCloud - GPL-3.0
+#
+# Gem CLI v1.0.0 - A Bash-based AI agent with tool use, memory, and provider system.
+
+set -uo pipefail
+
+# --- Resolve Script Directory ---
+
+# Get the directory where this script lives
+GEM_BINDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GEM_LIBDIR="${GEM_BINDIR}/lib"
+GEM_BASEDIR="$(cd "${GEM_BINDIR}/.." && pwd)"
+
+# --- Version Info ---
+
+GEM_VERSION="1.0.0"
+GEM_LICENSE="GPL-3.0"
+GEM_PROJECT="HintyCloud"
+
+# --- Load Libraries ---
+
+# Source all library files
+_gem_load_libs() {
+    local libs=(
+        "platform.sh"
+        "config.sh"
+        "memory.sh"
+        "provider.sh"
+        "tools.sh"
+        "agent.sh"
+        "chat.sh"
+    )
+    local lib
+    for lib in "${libs[@]}"; do
+        if [[ -f "${GEM_LIBDIR}/${lib}" ]]; then
+            # shellcheck source=/dev/null
+            source "${GEM_LIBDIR}/${lib}"
+        else
+            printf "Error: Missing library: %s\n" "${GEM_LIBDIR}/${lib}" >&2
+            exit 1
+        fi
+    done
+}
+
+_gem_load_libs
+
+# --- Global Initialization ---
+
+_gem_init() {
+    # Detect platform
+    gem_detect_platform
+
+    # Initialize configuration
+    gem_config_init
+
+    # Generate default config if needed
+    if [[ ! -f "${GEM_CONFIG_DIR}/config.env" ]]; then
+        gem_config_generate_default
+    fi
+
+    # Initialize provider registry
+    gem_provider_init
+
+    # Initialize tools registry
+    gem_tools_init
+}
+
+# --- Color Output Helpers ---
+
+gem_print_error()   { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; }
+gem_print_warning() { printf '\033[1;33mWarning:\033[0m %s\n' "$*"; }
+gem_print_info()    { printf '\033[1;34mInfo:\033[0m %s\n' "$*"; }
+gem_print_success() { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+
+# --- Subcommand: status ---
+
+gem_cmd_status() {
+    printf "Gem CLI Status\n"
+    printf "==============\n\n"
+    printf "  Version:     %s\n" "${GEM_VERSION}"
+    printf "  License:     %s\n" "${GEM_LICENSE}"
+    printf "  Project:     %s\n" "${GEM_PROJECT}"
+    printf "  Bindir:      %s\n" "${GEM_BINDIR}"
+    printf "  Config:      %s\n" "${GEM_CONFIG_DIR}"
+    printf "  Data:        %s\n" "${GEM_DATA_DIR}"
+    printf "  Cache:       %s\n" "${GEM_CACHE_DIR}"
+    printf "\n"
+
+    # Provider status
+    printf "Provider\n"
+    printf '%s\n' "-------"
+    printf "  Name:        %s\n" "${GEM_PROVIDER}"
+    printf "  API URL:     %s\n" "${GEM_API_URL}"
+    printf "  Model:       %s\n" "${GEM_MODEL}"
+    printf "  API Key:     %s\n" "$( [[ -n "${GEM_API_KEY}" ]] && echo 'configured (hidden)' || echo 'not set' )"
+    printf "\n"
+
+    # Platform info
+    printf "Platform\n"
+    printf '%s\n' "--------"
+    printf "  OS:          %s\n" "${GEM_OS}"
+    printf "  Arch:        %s\n" "${GEM_ARCH}"
+    printf "  Shell:       Bash %s\n" "${GEM_BASH_VERSION}"
+    printf "  Terminal:    %s (%dx%d)\n" "${GEM_TERM}" "${GEM_TERM_COLS}" "${GEM_TERM_LINES}"
+    printf "\n"
+
+    # Dependencies
+    printf "Dependencies\n"
+    printf '%s\n' "------------"
+    local deps=("curl" "jq" "git" "fzf" "bat" "rg")
+    local dep
+    for dep in "${deps[@]}"; do
+        if command -v "${dep}" &>/dev/null; then
+            printf "  %-12s %s\n" "${dep}" "$(command -v "${dep}")"
+        else
+            printf "  %-12s %s\n" "${dep}" "not found"
+        fi
+    done
+
+    # Check for missing required deps
+    if [[ ${#GEM_DEPS_MISSING[@]} -gt 0 ]]; then
+        printf "\n"
+        gem_print_warning "Missing required dependencies: ${GEM_DEPS_MISSING[*]}"
+        printf "Install them with: gem install-deps\n"
+    fi
+}
+
+# --- Subcommand: serve ---
+
+gem_cmd_serve() {
+    local port="${1:-${GEM_SERVE_PORT:-8080}}"
+    local host="${2:-${GEM_SERVE_HOST:-localhost}}"
+
+    gem_print_info "Starting Gem API server on ${host}:${port}..."
+    gem_print_warning "Note: serve is a stub - implement your HTTP server here"
+
+    # Simple stub using socat or nc if available
+    if command -v socat &>/dev/null; then
+        gem_print_info "Using socat for HTTP serving"
+        while true; do
+            socat TCP-LISTEN:${port},reuseaddr,fork EXEC:"${GEM_BINDIR}/gem serve-handler" 2>/dev/null || break
+        done
+    elif command -v python3 &>/dev/null; then
+        gem_print_info "Using Python3 http.server as fallback"
+        python3 -m http.server "${port}" --bind "${host}" 2>/dev/null
+    else
+        gem_print_error "No HTTP server capability found (install socat or python3)"
+        return 1
+    fi
+}
+
+# --- Subcommand: chat ---
+
+gem_cmd_chat() {
+    local session="default"
+    local message=""
+    local resume=0
+
+    # Parse chat arguments
+    while [[ $# -gt 0 ]]; do
+        case "${1}" in
+            -s|--session)
+                session="${2}"
+                shift 2
+                ;;
+            -m|--message)
+                message="${2}"
+                shift 2
+                ;;
+            -r|--resume)
+                resume=1
+                shift
+                ;;
+            -h|--help)
+                printf "Usage: gem chat [options]\n\n"
+                printf "Options:\n"
+                printf "  -s, --session NAME   Session name (default: default)\n"
+                printf "  -m, --message MSG    Send a single message (non-interactive)\n"
+                printf "  -r, --resume         Resume an existing session\n"
+                printf "  -h, --help           Show this help\n"
+                return 0
+                ;;
+            *)
+                # Treat first non-option argument as message
+                if [[ -z "${message}" ]]; then
+                    message="${1}"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "${resume}" -eq 1 ]]; then
+        gem_chat_resume "${session}"
+    elif [[ -n "${message}" ]]; then
+        # Non-interactive: send message and exit
+        gem_chat_send "${message}" "${session}"
+    else
+        # Interactive REPL
+        gem_chat_repl "${session}"
+    fi
+}
+
+# --- Subcommand: project ---
+
+gem_cmd_project() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            printf "Projects\n"
+            printf "========\n"
+            local proj_dir="${GEM_CONFIG_DIR}/projects"
+            if [[ -d "${proj_dir}" ]] && [[ -n "$(ls -A "${proj_dir}" 2>/dev/null)" ]]; then
+                local f
+                for f in "${proj_dir}"/*; do
+                    if [[ -f "${f}" ]]; then
+                        printf "  %s\n" "$(basename "${f}")"
+                    fi
+                done
+            else
+                printf "  No projects configured.\n"
+            fi
+            ;;
+
+        create)
+            local name="${1:-}"
+            if [[ -z "${name}" ]]; then
+                gem_print_error "Usage: gem project create <name>"
+                return 1
+            fi
+            local proj_file="${GEM_CONFIG_DIR}/projects/${name}.env"
+            mkdir -p "$(dirname "${proj_file}")"
+            printf '# Gem Project: %s\n' "${name}" > "${proj_file}"
+            printf 'GEM_PROJECT_NAME=%s\n' "${name}" >> "${proj_file}"
+            printf 'GEM_PROJECT_DIR=%s\n' "$(pwd)" >> "${proj_file}"
+            printf 'GEM_PROJECT_CREATED=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${proj_file}"
+            gem_print_success "Project created: ${name}"
+            ;;
+
+        delete|rm)
+            local name="${1:-}"
+            if [[ -z "${name}" ]]; then
+                gem_print_error "Usage: gem project delete <name>"
+                return 1
+            fi
+            local proj_file="${GEM_CONFIG_DIR}/projects/${name}.env"
+            if [[ -f "${proj_file}" ]]; then
+                rm -f "${proj_file}"
+                gem_print_success "Project deleted: ${name}"
+            else
+                gem_print_error "Project not found: ${name}"
+                return 1
+            fi
+            ;;
+
+        info)
+            local name="${1:-}"
+            if [[ -z "${name}" ]]; then
+                gem_print_error "Usage: gem project info <name>"
+                return 1
+            fi
+            local proj_file="${GEM_CONFIG_DIR}/projects/${name}.env"
+            if [[ -f "${proj_file}" ]]; then
+                printf "Project: %s\n" "${name}"
+                printf "%s\n" "$(cat "${proj_file}")"
+            else
+                gem_print_error "Project not found: ${name}"
+                return 1
+            fi
+            ;;
+
+        *)
+            printf "Usage: gem project <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List projects\n"
+            printf "  create <name>     Create a new project\n"
+            printf "  delete <name>     Delete a project\n"
+            printf "  info <name>       Show project info\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: jobs ---
+
+gem_cmd_jobs() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    local jobs_dir="${GEM_STATE_DIR}/jobs"
+
+    case "${action}" in
+        list|ls)
+            printf "Jobs\n"
+            printf "====\n"
+            if [[ -d "${jobs_dir}" ]] && [[ -n "$(ls -A "${jobs_dir}" 2>/dev/null)" ]]; then
+                local f
+                for f in "${jobs_dir}"/*; do
+                    if [[ -f "${f}" ]]; then
+                        local name status ts
+                        name="$(basename "${f}" .json)"
+                        status="$(jq -r '.status // "unknown"' "${f}" 2>/dev/null)"
+                        ts="$(jq -r '.created // "unknown"' "${f}" 2>/dev/null)"
+                        printf "  %-20s %-10s %s\n" "${name}" "${status}" "${ts}"
+                    fi
+                done
+            else
+                printf "  No jobs found.\n"
+            fi
+            ;;
+
+        submit)
+            local prompt="${*:-}"
+            if [[ -z "${prompt}" ]]; then
+                gem_print_error "Usage: gem jobs submit <prompt>"
+                return 1
+            fi
+            local job_id="job-$(date +%s)"
+            local job_file="${jobs_dir}/${job_id}.json"
+            mkdir -p "${jobs_dir}"
+            jq -n \
+                --arg id "${job_id}" \
+                --arg prompt "${prompt}" \
+                --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{id: $id, prompt: $prompt, status: "pending", created: $ts}' \
+                > "${job_file}"
+            gem_print_success "Job submitted: ${job_id}"
+
+            # Execute in background
+            (
+                gem_agent_init "job-${job_id}"
+                local result
+                result="$(gem_agent_run "${prompt}" "job-${job_id}" 2>&1)"
+                jq -n \
+                    --arg id "${job_id}" \
+                    --arg result "${result}" \
+                    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                    '. + {status: "completed", result: $result, completed: $ts}' \
+                    "${job_file}" > "${job_file}.tmp" 2>/dev/null
+                mv "${job_file}.tmp" "${job_file}" 2>/dev/null
+            ) &
+            ;;
+
+        status)
+            local job_id="${1:-}"
+            if [[ -z "${job_id}" ]]; then
+                gem_print_error "Usage: gem jobs status <job-id>"
+                return 1
+            fi
+            local job_file="${jobs_dir}/${job_id}.json"
+            if [[ -f "${job_file}" ]]; then
+                printf "%s\n" "$(jq '.' "${job_file}" 2>/dev/null)"
+            else
+                gem_print_error "Job not found: ${job_id}"
+                return 1
+            fi
+            ;;
+
+        cancel)
+            local job_id="${1:-}"
+            if [[ -z "${job_id}" ]]; then
+                gem_print_error "Usage: gem jobs cancel <job-id>"
+                return 1
+            fi
+            local job_file="${jobs_dir}/${job_id}.json"
+            if [[ -f "${job_file}" ]]; then
+                jq '. + {status: "cancelled"}' "${job_file}" > "${job_file}.tmp" 2>/dev/null
+                mv "${job_file}.tmp" "${job_file}" 2>/dev/null
+                gem_print_success "Job cancelled: ${job_id}"
+            else
+                gem_print_error "Job not found: ${job_id}"
+                return 1
+            fi
+            ;;
+
+        clean)
+            local count=0
+            if [[ -d "${jobs_dir}" ]]; then
+                for f in "${jobs_dir}"/*.json; do
+                    [[ -f "${f}" ]] || continue
+                    local status
+                    status="$(jq -r '.status // "unknown"' "${f}" 2>/dev/null)"
+                    if [[ "${status}" == "completed" ]] || [[ "${status}" == "cancelled" ]]; then
+                        rm -f "${f}"
+                        count=$((count + 1))
+                    fi
+                done
+            fi
+            gem_print_success "Cleaned ${count} finished jobs"
+            ;;
+
+        *)
+            printf "Usage: gem jobs <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List all jobs\n"
+            printf "  submit <prompt>   Submit a new job\n"
+            printf "  status <id>       Show job status\n"
+            printf "  cancel <id>       Cancel a job\n"
+            printf "  clean             Remove finished jobs\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: models ---
+
+gem_cmd_models() {
+    local provider="${1:-${GEM_PROVIDER}}"
+
+    printf "Models for provider: %s\n" "${provider}"
+    printf "======================%s\n" "$(printf '%0.s=' $(seq 1 ${#provider}))"
+
+    local models
+    models="$(gem_provider_list_models "${provider}")"
+
+    if [[ -n "${models}" ]]; then
+        local m
+        while IFS= read -r m; do
+            if [[ "${m}" == "${GEM_MODEL}" ]]; then
+                printf "  * %s  (active)\n" "${m}"
+            else
+                printf "    %s\n" "${m}"
+            fi
+        done <<< "${models}"
+    else
+        printf "  No models found. Check your API key and connection.\n"
+    fi
+}
+
+# --- Subcommand: providers ---
+
+gem_cmd_providers() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            gem_provider_list
+            ;;
+
+        test)
+            local provider="${1:-${GEM_PROVIDER}}"
+            gem_provider_test "${provider}"
+            ;;
+
+        set)
+            local provider="${1:-}"
+            if [[ -z "${provider}" ]]; then
+                gem_print_error "Usage: gem providers set <name>"
+                return 1
+            fi
+            if [[ -n "${GEM_PROVIDERS[${provider}]+set}" ]]; then
+                gem_config_set "GEM_PROVIDER" "${provider}"
+                gem_config_set "GEM_MODEL" "$(gem_provider_list_models "${provider}" | head -1)"
+                gem_print_success "Provider set to: ${provider}"
+            else
+                gem_print_error "Unknown provider: ${provider}"
+                return 1
+            fi
+            ;;
+
+        *)
+            printf "Usage: gem providers <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List providers\n"
+            printf "  test [name]       Test provider connectivity\n"
+            printf "  set <name>        Set active provider\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: tools ---
+
+gem_cmd_tools() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            gem_tools_list
+            ;;
+
+        exec|run)
+            local tool_name="${1:-}"
+            local tool_args="${2:-{}}"
+            if [[ -z "${tool_name}" ]]; then
+                gem_print_error "Usage: gem tools exec <name> [args-json]"
+                return 1
+            fi
+            local result
+            result="$(gem_tool_execute "${tool_name}" "${tool_args}")"
+            printf '%s\n' "${result}"
+            ;;
+
+        schema)
+            gem_tools_build_schema | jq '.'
+            ;;
+
+        *)
+            printf "Usage: gem tools <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List available tools\n"
+            printf "  exec <name> [j]   Execute a tool\n"
+            printf "  schema            Show tool schemas (JSON)\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: agents ---
+
+gem_cmd_agents() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            gem_agent_list
+            ;;
+
+        status)
+            gem_agent_status
+            ;;
+
+        run)
+            local agent="${1:-default}"
+            local message="${2:-}"
+            if [[ -z "${message}" ]]; then
+                gem_print_error "Usage: gem agents run <agent> <message>"
+                return 1
+            fi
+            gem_agent_init "agent-$(date +%s)" "${agent}"
+            gem_agent_run "${message}"
+            ;;
+
+        *)
+            printf "Usage: gem agents <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List agents\n"
+            printf "  status            Show agent status\n"
+            printf "  run <name> <msg>  Run an agent with a message\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: config ---
+
+gem_cmd_config() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            gem_config_list
+            ;;
+
+        get)
+            local key="${1:-}"
+            if [[ -z "${key}" ]]; then
+                gem_print_error "Usage: gem config get <key>"
+                return 1
+            fi
+            local value
+            value="$(gem_config_get "${key}")"
+            printf "%s = %s\n" "${key}" "${value}"
+            ;;
+
+        set)
+            local key="${1:-}"
+            local value="${2:-}"
+            if [[ -z "${key}" ]]; then
+                gem_print_error "Usage: gem config set <key> <value>"
+                return 1
+            fi
+            gem_config_set "${key}" "${value}"
+            gem_print_success "Set ${key} = ${value}"
+            ;;
+
+        unset|delete|rm)
+            local key="${1:-}"
+            if [[ -z "${key}" ]]; then
+                gem_print_error "Usage: gem config unset <key>"
+                return 1
+            fi
+            gem_config_unset "${key}"
+            gem_print_success "Unset ${key}"
+            ;;
+
+        init)
+            gem_config_generate_default
+            gem_print_success "Config initialized"
+            ;;
+
+        path)
+            printf "Config:  %s\n" "${GEM_CONFIG_DIR}"
+            printf "Data:    %s\n" "${GEM_DATA_DIR}"
+            printf "Cache:   %s\n" "${GEM_CACHE_DIR}"
+            printf "State:   %s\n" "${GEM_STATE_DIR}"
+            ;;
+
+        *)
+            printf "Usage: gem config <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list              List configuration\n"
+            printf "  get <key>         Get a value\n"
+            printf "  set <key> <val>   Set a value\n"
+            printf "  unset <key>       Delete a value\n"
+            printf "  init              Generate default config\n"
+            printf "  path              Show config paths\n"
+            ;;
+    esac
+}
+
+# --- Subcommand: memory ---
+
+gem_cmd_memory() {
+    local action="${1:-list}"
+    shift 2>/dev/null || true
+
+    case "${action}" in
+        list|ls)
+            local ns="${1:-default}"
+            printf "Memory (%s)\n" "${ns}"
+            printf "=============\n"
+            gem_memory_list "${ns}"
+            ;;
+
+        save)
+            local ns="${1:-default}"
+            local key="${2:-}"
+            local value="${3:-}"
+            if [[ -z "${key}" ]] || [[ -z "${value}" ]]; then
+                gem_print_error "Usage: gem memory save [namespace] <key> <value>"
+                return 1
+            fi
+            gem_memory_save "${ns}" "${key}" "${value}"
+            gem_print_success "Saved: ${key} = ${value}"
+            ;;
+
+        recall)
+            local ns="${1:-default}"
+            local key="${2:-}"
+            if [[ -z "${key}" ]]; then
+                gem_print_error "Usage: gem memory recall [namespace] <key>"
+                return 1
+            fi
+            local value
+            value="$(gem_memory_recall "${ns}" "${key}")"
+            if [[ -n "${value}" ]]; then
+                printf "%s = %s\n" "${key}" "${value}"
+            else
+                gem_print_warning "No memory found for: ${key}"
+            fi
+            ;;
+
+        delete|rm|forget)
+            local ns="${1:-default}"
+            local key="${2:-}"
+            if [[ -z "${key}" ]]; then
+                gem_print_error "Usage: gem memory delete [namespace] <key>"
+                return 1
+            fi
+            gem_memory_delete "${ns}" "${key}"
+            gem_print_success "Deleted: ${key}"
+            ;;
+
+        *)
+            printf "Usage: gem memory <action> [args]\n\n"
+            printf "Actions:\n"
+            printf "  list [ns]              List memories\n"
+            printf "  save [ns] <k> <v>      Save a memory\n"
+            printf "  recall [ns] <k>        Recall a memory\n"
+            printf "  delete [ns] <k>        Delete a memory\n"
+            ;;
+    esac
+}
+
+# --- Main Entry Point ---
+
+gem_main() {
+    # Initialize
+    _gem_init
+
+    # No arguments: enter chat
+    if [[ $# -eq 0 ]]; then
+        gem_cmd_chat
+        return
+    fi
+
+    local command="${1}"
+    shift
+
+    case "${command}" in
+        # Core commands
+        status)     gem_cmd_status "$@"    ;;
+        serve)      gem_cmd_serve "$@"     ;;
+        chat)       gem_cmd_chat "$@"      ;;
+        project)    gem_cmd_project "$@"   ;;
+        jobs)       gem_cmd_jobs "$@"      ;;
+        models)     gem_cmd_models "$@"    ;;
+        providers)  gem_cmd_providers "$@" ;;
+        tools)      gem_cmd_tools "$@"     ;;
+        agents)     gem_cmd_agents "$@"    ;;
+        config)     gem_cmd_config "$@"    ;;
+        memory)     gem_cmd_memory "$@"    ;;
+
+        # Shortcuts
+        s)          gem_cmd_status "$@"    ;;
+        c)          gem_cmd_chat "$@"      ;;
+        m)          gem_cmd_models "$@"    ;;
+        p)          gem_cmd_providers "$@" ;;
+        t)          gem_cmd_tools "$@"     ;;
+        a)          gem_cmd_agents "$@"    ;;
+
+        # Meta commands
+        version|--version|-V)
+            printf "gem v%s (%s, %s)\n" "${GEM_VERSION}" "${GEM_LICENSE}" "${GEM_PROJECT}"
+            ;;
+
+        help|--help|-h)
+            printf "gem - AI Agent CLI (v%s)\n" "${GEM_VERSION}"
+            printf "Copyright (C) 2025 %s - %s\n\n" "${GEM_PROJECT}" "${GEM_LICENSE}"
+            printf "Usage: gem [command] [options]\n\n"
+            printf "Commands:\n"
+            printf "  status      Show system status and configuration\n"
+            printf "  serve       Start API server\n"
+            printf "  chat        Interactive chat (default)\n"
+            printf "  project     Manage projects\n"
+            printf "  jobs        Manage background jobs\n"
+            printf "  models      List and manage models\n"
+            printf "  providers   List and manage providers\n"
+            printf "  tools       List and execute tools\n"
+            printf "  agents      List and run agents\n"
+            printf "  config      Manage configuration\n"
+            printf "  memory      Manage long-term memory\n"
+            printf "\n"
+            printf "Shortcuts: s=status, c=chat, m=models, p=providers, t=tools, a=agents\n"
+            printf "\n"
+            printf "Options:\n"
+            printf "  --version, -V    Show version\n"
+            printf "  --help, -h       Show this help\n"
+            printf "\n"
+            printf "Environment:\n"
+            printf "  GEM_API_URL      API endpoint URL\n"
+            printf "  GEM_API_KEY      API authentication key\n"
+            printf "  GEM_MODEL        Default model\n"
+            printf "  GEM_PROVIDER     Default provider\n"
+            printf "  GEM_VERBOSE      Verbose output (0/1)\n"
+            printf "\n"
+            printf "Configuration: %s\n" "${GEM_CONFIG_DIR}"
+            printf "Documentation: https://github.com/HintyCloud/gem-bash\n"
+            ;;
+
+        install-deps)
+            gem_print_info "Installing required dependencies..."
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update -qq && sudo apt-get install -y -qq curl jq
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y curl jq
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -S --noconfirm curl jq
+            elif command -v brew &>/dev/null; then
+                brew install curl jq
+            else
+                gem_print_error "Cannot determine package manager. Install curl and jq manually."
+                return 1
+            fi
+            gem_print_success "Dependencies installed"
+            ;;
+
+        *)
+            gem_print_error "Unknown command: ${command}"
+            printf "Run 'gem help' for available commands.\n" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Run main
+gem_main "$@"
