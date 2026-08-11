@@ -1,10 +1,15 @@
-
-
 A coding agent for your terminal.
 
 ""Rust" (https://img.shields.io/badge/built%20with-Rust-orange?logo=rust&logoColor=white)" (https://www.rust-lang.org/)
+
+
 ""License" (https://img.shields.io/badge/license-GPL--3.0-blue.svg)" (LICENSE)
+
+
+
 ""Platform" (https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Termux-lightgrey)" (#platforms)
+
+
 ""GitHub" (https://img.shields.io/badge/GitHub-HintyCloud%2Fgem--rust-black?logo=github)" (https://github.com/HintyCloud/gem-rust)
 
 Gem is a coding agent for developers who want to work with their codebase directly from the command line.
